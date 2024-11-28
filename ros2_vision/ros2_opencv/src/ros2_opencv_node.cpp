@@ -11,34 +11,80 @@ using namespace std::chrono_literals;
 class MinimalImagePublisher : public rclcpp::Node {
 public:
   MinimalImagePublisher() : Node("opencv_image_publisher"), count_(0) {
+  
     publisher_ =
-        this->create_publisher<sensor_msgs::msg::Image>("random_image", 10);
+        this->create_publisher<sensor_msgs::msg::Image>("/processed_image", 10);
+        
     timer_ = this->create_wall_timer(
-        500ms, std::bind(&MinimalImagePublisher::timer_callback, this));
+        30ms, std::bind(&MinimalImagePublisher::timer_callback, this));
+        
+    sim_image_subscriber_ = this->create_subscription<sensor_msgs::msg::Image>(
+                "/videocamera", 10, std::bind(&MinimalImagePublisher::img_subscriber, this, std::placeholders::_1));
   }
  
 private:
   void timer_callback() {
-    // Create a new 640x480 image
-    cv::Mat my_image(cv::Size(640, 480), CV_8UC3);
- 
-    // Generate an image where each pixel is a random color
-    cv::randu(my_image, cv::Scalar(0, 0, 0), cv::Scalar(255, 255, 255));
- 
     // Write message to be sent. Member function toImageMsg() converts a CvImage
     // into a ROS image message
-    msg_ = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", my_image)
+    msg_ = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", img_pub)
                .toImageMsg();
  
     // Publish the image to the topic defined in the publisher
     publisher_->publish(*msg_.get());
-    RCLCPP_INFO(this->get_logger(), "Image %ld published", count_);
+    //RCLCPP_INFO(this->get_logger(), "Image %ld published", count_);
     count_++;
   }
+  
+  void img_subscriber(const sensor_msgs::msg::Image::SharedPtr sensor_msg) {
+    // Convert ROS image to OpenCV image
+    cv::Mat cv_image = cv_bridge::toCvCopy(sensor_msg, "bgr8")->image;
+
+    // Convert the image to HSV color space
+    cv::Mat hsv_image;
+    cv::cvtColor(cv_image, hsv_image, cv::COLOR_BGR2HSV);
+
+    // Define the range for blue color in HSV
+    cv::Scalar lower_blue(100, 150, 50); // Adjust these values for your lighting conditions
+    cv::Scalar upper_blue(140, 255, 255);
+
+    // Create a mask for blue regions
+    cv::Mat mask;
+    cv::inRange(hsv_image, lower_blue, upper_blue, mask);
+
+    // Configure blob detector parameters
+    cv::SimpleBlobDetector::Params params;
+    params.filterByCircularity = true;
+    params.minCircularity = 0.8;
+    params.filterByColor = true;
+    params.blobColor = 255;
+    params.filterByArea = true;
+    params.minArea = 0;
+    params.maxArea = 50000;
+
+    // Create a blob detector
+    cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create(params);
+    std::vector<cv::KeyPoint> keypoints;
+
+    // Detect blobs in the mask
+    detector->detect(mask, keypoints);
+
+    // Draw detected blobs as red circles
+    cv::Mat im_with_keypoints;
+    cv::drawKeypoints(cv_image, keypoints, im_with_keypoints, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+    img_pub = im_with_keypoints;
+  }
+
+
+  
   rclcpp::TimerBase::SharedPtr timer_;
   sensor_msgs::msg::Image::SharedPtr msg_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
   size_t count_;
+  
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sim_image_subscriber_;
+  
+  cv::Mat img_pub;
 };
  
 int main(int argc, char *argv[]) {

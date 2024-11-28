@@ -232,6 +232,10 @@
       <axis xyz="0 0 0"/>
   </joint>
   
+  
+  <xacro:property name="use_vision" value="$(arg use_vision)" />
+  <xacro:if value="${use_vision}">
+  
   <xacro:include filename="$(find iiwa_description)/urdf/arm_camera.xacro" />
     <joint name="camera_joint" type="fixed">
       <parent link="${prefix}link_7"/>
@@ -247,6 +251,8 @@
       </visual>
   </link>
   <xacro:arm_camera name="camera" link_reference="camera_link"/>
+  
+  </xacro:if>
 
   </xacro:macro>
 </robot>

@@ -151,6 +151,13 @@ def generate_launch_description():
             description='Configuration file of robot base frame wrt World.',
         )
     )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            'use_vision',
+            default_value='false',
+            description='Start camera in Gazebo simulation.',
+        )
+    )
 
     # Initialize Arguments
     runtime_config_package = LaunchConfiguration('runtime_config_package')
@@ -170,6 +177,7 @@ def generate_launch_description():
     command_interface = LaunchConfiguration('command_interface')
     base_frame_file = LaunchConfiguration('base_frame_file')
     namespace = LaunchConfiguration('namespace')
+    use_vision = LaunchConfiguration('use_vision')
 
     # Get URDF via xacro
     robot_description_content = Command(
@@ -215,6 +223,9 @@ def generate_launch_description():
             ' ',
             'namespace:=',
             namespace,
+            ' ',
+            'use_vision:=',
+            use_vision,
         ]
     )
 
@@ -385,7 +396,8 @@ def generate_launch_description():
             '--ros-args', 
             '-r', '/camera:=/videocamera',
         ],
-        output='screen'
+        output='screen',
+        condition=IfCondition(use_vision),
     )
 
     nodes = [
