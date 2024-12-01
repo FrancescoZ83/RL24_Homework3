@@ -10,6 +10,11 @@
   <depend>rclcpp</depend>
   <depend>orocos_kdl</depend>
   <depend>kdl_parser</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_kdl</depend>
+  <depend>tf2_geometry_msgs</depend>
   
   <buildtool_depend>ament_cmake</buildtool_depend>
 

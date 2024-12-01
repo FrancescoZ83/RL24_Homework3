@@ -14,12 +14,17 @@ find_package(kdl_parser REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_kdl REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
-add_executable(ros2_kdl_node src/ros2_kdl_node.cpp src/kdl_robot.cpp src/kdl_planner.cpp src/kdl_control.cpp)
+add_executable(ros2_kdl_node src/kdl_robot.cpp src/kdl_planner.cpp src/kdl_control.cpp src/ros2_kdl_vision_control.cpp)
 target_include_directories(ros2_kdl_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -31,10 +36,20 @@ ament_target_dependencies(ros2_kdl_node
   rclcpp
   kdl_parser
   sensor_msgs
-  std_msgs)
+  std_msgs
+  geometry_msgs
+  tf2
+  tf2_ros
+  tf2_kdl
+  tf2_geometry_msgs)
 
 install(TARGETS ros2_kdl_node
   DESTINATION lib/${PROJECT_NAME})
+  
+install(
+  DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

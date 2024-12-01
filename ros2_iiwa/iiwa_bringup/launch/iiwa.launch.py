@@ -399,6 +399,20 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(use_vision),
     )
+    
+    bridge_camera_aruco = Node(
+        package='ros_ign_bridge',
+        executable='parameter_bridge',
+        arguments=[
+            '/camera@sensor_msgs/msg/Image@gz.msgs.Image',
+            '/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo',
+            '--ros-args', 
+            '-r', '/camera:=/stereo/left/image_rect_color',
+            '-r', '/camera_info:=/stereo/left/camera_info',
+        ],
+        output='screen',
+        condition=IfCondition(use_vision),
+    )
 
     nodes = [
         gazebo,
@@ -413,6 +427,7 @@ def generate_launch_description():
         external_torque_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
         bridge_camera,
+        bridge_camera_aruco,
     ]
 
     return LaunchDescription(declared_arguments + nodes)
