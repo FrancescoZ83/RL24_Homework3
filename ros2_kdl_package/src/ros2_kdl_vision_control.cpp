@@ -68,7 +68,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             {
                 RCLCPP_INFO(get_logger(),"Selected control type is not valid!"); return;
             }
-            if (!(task_ == "positioning" || task_ == "look_at_pont"))
+            if (!(task_ == "positioning" || task_ == "look_at_point"))
             {
                 RCLCPP_INFO(get_logger(),"Selected task is not valid!"); return;
             }
@@ -152,7 +152,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             KDL::Frame inverse_rotation_frame2(KDL::Rotation::RotZ(-3.14), KDL::Vector::Zero());
             KDL::Frame inverse_rotation_frame(KDL::Rotation::RotX(-3.14), KDL::Vector::Zero());
             KDL::Frame inverse_translation_frame(KDL::Rotation::Identity(), KDL::Vector(0.0, 0.0, -0.5));
-            aruco_frame = init_cart_pose_ * inverse_rotation_frame2 * inverse_rotation_frame;// * inverse_translation_frame;
+            aruco_frame = init_cart_pose_ * inverse_rotation_frame2 * inverse_rotation_frame * inverse_translation_frame;
+            camera_frame = init_cart_pose_ * inverse_rotation_frame2 * inverse_rotation_frame;
     
             // Plan trajectory
             double traj_duration = 5, acc_duration = 0.5, t = 0.0, radius=0.3;
@@ -228,10 +229,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             
             // Vision task: Compute desired pose for positioning task
             
-            if(task_ == "positioning"){
-            
-                try{
-                aruco_pose = tf_buffer_->lookupTransform("world", "aruco_marker_frame", rclcpp::Time(0), std::chrono::milliseconds(freq_ms));
+            try{
+                aruco_pose = tf_buffer_->lookupTransform("world", "aruco_marker_frame", rclcpp::Time(0), std::chrono::milliseconds(freq_ms*10));
                 
                 // Convert to tf2::Transform
                 tf2::Transform tf3d;
@@ -245,74 +244,121 @@ class Iiwa_pub_sub : public rclcpp::Node
                 KDL::Frame frame_temp(rotation, translation);
                 
                 aruco_frame = frame_temp;
-                //aruco_frame.p.x(-aruco_frame.p.x());
-                //aruco_frame.p.y(-aruco_frame.p.y());
                 
-                }catch(const tf2::TransformException &){}
-                
+            }catch(const tf2::TransformException &){}
+            
+            KDL::Frame cartpos = robot_->getEEFrame();
+            
+            if(task_ == "positioning"){
+            
                 KDL::Frame translation_frame(KDL::Rotation::Identity(), KDL::Vector(0.0, 0.0, 0.5));
                 KDL::Frame rotation_frame(KDL::Rotation::RotX(3.14), KDL::Vector::Zero());
                 KDL::Frame rotation_frame2(KDL::Rotation::RotZ(3.14), KDL::Vector::Zero());
-                KDL::Frame desired_frame = aruco_frame /** translation_frame*/ * rotation_frame * rotation_frame2;
+                KDL::Frame desired_frame = aruco_frame * translation_frame * rotation_frame * rotation_frame2;
                 
-                
-                        KDL::Vector position(-0.00518143, -0.710541, 0.705162);
-        double yaw = 0.22, pitch = -1.56, roll = -0.22;
-
-        // Create KDL::Rotation from Euler angles (ZYX order: yaw, pitch, roll)
-        KDL::Rotation rotationddd = KDL::Rotation::RPY(roll, pitch, yaw);
-
-        // Set the position and rotation to the KDL::Frame
-        KDL::Frame desiredddd_frame(rotationddd, position);
-                desired_frame = desiredddd_frame;
-                
-                    std::cout << "Position: " 
-              << "x = " << desired_frame.p.x() << ", "
-              << "y = " << desired_frame.p.y() << ", "
-              << "z = " << desired_frame.p.z() << std::endl;
-              
-               double roll, pitch, yaw;
-               desired_frame.M.GetEulerZYX(yaw, pitch, roll);
-               RCLCPP_INFO(this->get_logger(), "Euler Angles - Yaw: %.2f, Pitch: %.2f, Roll: %.2f", yaw, pitch, roll);
-                
-                KDL::Frame cartpos = robot_->getEEFrame();
                 if(cmd_interface_ == "velocity"){
                     Eigen::Vector3d error = computeLinearError(Eigen::Vector3d(desired_frame.p.data), Eigen::Vector3d(cartpos.p.data));
                     Eigen::Vector3d o_error = computeOrientationError(toEigen(desired_frame.M), toEigen(cartpos.M));
                     
-                    Vector6d cartvel; cartvel << 10*error, o_error;
+                    Vector6d cartvel; cartvel << 5*error, 3*o_error;
                     joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
                     joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
+                    
                 }else if(cmd_interface_ == "effort"){
                     
-                    Vector6d cartvel; cartvel << Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-                    Vector6d cartacc; cartacc << Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-                    KDL::Frame d_pos; d_pos.M = desired_frame.M; d_pos.p = desired_frame.p;
-                    KDL::Twist d_vel = toKDLTwist(cartvel);
-                    KDL::Twist d_acc = toKDLTwist(cartacc);
+                    if(cont_type_ == "jnt"){
                     
-                    controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda_clik);
-                    //joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                        robot_->getInverseKinematics(desired_frame, dpos);
+                        dvel.data = Eigen::VectorXd::Zero(robot_->getNrJnts());
+                        dacc.data = Eigen::VectorXd::Zero(robot_->getNrJnts());
+                        joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                        
+                    }else if(cont_type_ == "op"){
+                        
+                        KDL::Frame d_pos = desired_frame;
+                        KDL::Twist d_vel = toKDLTwist(Eigen::VectorXd::Zero(6));
+                        KDL::Twist d_acc = toKDLTwist(Eigen::VectorXd::Zero(6));
+                        joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, KD_o, *robot_, lambda_op) - robot_->getGravity();
+                    }
                 }
                 
-                // Update KDLrobot structure
-                robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
-                if(cmd_interface_ == "velocity"){
-                    // Send joint velocity commands
-                    for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
-                        desired_commands_[i] = joint_velocities_(i);
-                    }
-                } else if(cmd_interface_ == "effort"){
-                    // Send joint effort commands
-                    for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
-                        desired_commands_[i] = joint_efforts_(i);
-                    }
-                }
-                // Create msg and publish
-                std_msgs::msg::Float64MultiArray cmd_msg;
-                cmd_msg.data = desired_commands_;
-                cmdPublisher_->publish(cmd_msg);
             }
+            
+            if(task_ == "look_at_point"){
+                /*
+                try{
+                camera_pose = tf_buffer_->lookupTransform("world", "aruco_marker_frame", rclcpp::Time(0), std::chrono::milliseconds(freq_ms*10));
+                tf2::Transform tf3d;
+                tf2::fromMsg(aruco_pose.transform, tf3d);
+                KDL::Vector translation(tf3d.getOrigin().x(), tf3d.getOrigin().y(), tf3d.getOrigin().z());
+                KDL::Rotation rotation = KDL::Rotation::Quaternion(
+                tf3d.getRotation().x(), tf3d.getRotation().y(),
+                tf3d.getRotation().z(), tf3d.getRotation().w());
+                KDL::Frame frame_temp(rotation, translation);
+                camera_frame = frame_temp;
+                }catch(const tf2::TransformException &){}
+                */
+                KDL::Frame rotation_frame(KDL::Rotation::RotX(3.14), KDL::Vector::Zero());
+                KDL::Frame rotation_frame2(KDL::Rotation::RotZ(3.14), KDL::Vector::Zero());
+                KDL::Frame camera_frame = cartpos * rotation_frame * rotation_frame2;
+                
+                double k = 10.0;
+                KDL::Vector diff_position = aruco_frame.p - camera_frame.p;
+                Eigen::Vector3d cPo(diff_position.x(), diff_position.y(), diff_position.z());
+                Eigen::Vector3d sd(0.0, 0.0, 1.0);
+                Eigen::Vector3d s(cPo(0)/cPo.norm(), cPo(1)/cPo.norm(), cPo(2)/cPo.norm());
+                Eigen::Matrix3d Ss = skew(s);
+                Eigen::Matrix3d Rc = toEigen(camera_frame.M);
+                Eigen::MatrixXd R(6, 6);
+                R.setZero();
+                R.block<3, 3>(0, 0) = Rc;
+                R.block<3, 3>(3, 3) = Rc;
+                
+                Eigen::MatrixXd Jc(3, 6);
+                Jc.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+                Jc.block<3, 3>(0, 3) = Ss;
+                //Eigen::MatrixXd Jc=robot_->getEEJacobian().data;
+                
+                Eigen::MatrixXd L(3, 6);
+                L.block<3, 3>(0, 0) = (-1/cPo.norm())*(Eigen::Matrix3d::Identity() - s*s.transpose());
+                L.block<3, 3>(0, 3) = Ss;
+                
+                //Eigen::MatrixXd N = Eigen::MatrixXd::Identity(6, 6) - pseudoinverse(L*Jc) * L*Jc;
+                
+                dvel.data = k * pseudoinverse(L*Jc) * sd;
+                
+                Eigen::VectorXd error_vel = dvel.data - joint_velocities_.data;
+                
+                if(cmd_interface_ == "velocity"){
+                    
+                    joint_velocities_.data = dvel.data + 5*error_vel;
+                    joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
+                    
+                }else if(cmd_interface_ == "effort"){
+                    
+                    dacc.data = Eigen::VectorXd::Zero(robot_->getNrJnts());
+                    dpos.data = dpos.data + dvel.data*dt; 
+                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                }
+            }
+            
+            // Update KDLrobot structure
+            robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
+            if(cmd_interface_ == "velocity"){
+                // Send joint velocity commands
+                for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
+                    desired_commands_[i] = joint_velocities_(i);
+                }
+            } else if(cmd_interface_ == "effort"){
+                // Send joint effort commands
+                for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
+                    desired_commands_[i] = joint_efforts_(i);
+                }
+            }
+            // Create msg and publish
+            std_msgs::msg::Float64MultiArray cmd_msg;
+            cmd_msg.data = desired_commands_;
+            cmdPublisher_->publish(cmd_msg);
             
             /*
             if (t_ < total_time){
@@ -478,6 +524,8 @@ class Iiwa_pub_sub : public rclcpp::Node
         
         geometry_msgs::msg::TransformStamped aruco_pose;
         KDL::Frame aruco_frame;
+        //geometry_msgs::msg::TransformStamped camera_pose;
+        KDL::Frame camera_frame;
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };
