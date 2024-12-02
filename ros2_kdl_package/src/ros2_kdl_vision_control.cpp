@@ -355,7 +355,7 @@ std::cout<<"EndEff RPY: " <<std::endl;
                 L.block<3, 3>(0, 3) = Ss;
                 L=L*R;
                 
-                Eigen::MatrixXd Jc = L * Tce * robot_->getEEJacobian().data;
+                Eigen::MatrixXd Jc = /*L **/ Tce * robot_->getEEJacobian().data;
                 
                 //Eigen::IOFormat CleanFmt(4, 0, ", ", "\n", "[", "]");
                 //std::cout << "Matrix L:\n" << L.format(CleanFmt) << std::endl;
