@@ -169,7 +169,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             
             trajectory_point p;
             
-            if(traj_type_ == "lin_pol"){
+            if(traj_type_ == "lin_pol" || traj_type_ == "no_traj"){
                 p = planner_linear.compute_trajectory_linear(t);
             }else if(traj_type_ == "lin_trap"){
                 p = planner_linear.compute_trajectory_linear(t, acc_duration);
@@ -189,7 +189,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             robot_->getInverseKinematics(des_pos_rot_, dpos);
             
             dvel_vis.data = dvel.data;
-            dpos_vis.data = dpos.data;
+            robot_->getInverseKinematics(init_cart_pose_, dpos_vis);
             
             
             if(cmd_interface_ == "velocity"){
@@ -296,6 +296,109 @@ class Iiwa_pub_sub : public rclcpp::Node
                 
             }
             
+            // Trajectory Computation
+            
+            
+            /*
+            
+            
+            if (t_ < total_time){
+
+                // Retrieve the trajectory point
+                
+                trajectory_point p;
+                if(traj_type_ == "lin_pol"){
+                    p = planner_linear.compute_trajectory_linear(t_);
+                }else if(traj_type_ == "lin_trap"){
+                    p = planner_linear.compute_trajectory_linear(t_, acc_duration);
+                }else if(traj_type_ == "cir_pol"){
+                    p = planner_circle.compute_trajectory_circle(t_);
+                }else if(traj_type_ == "cir_trap"){
+                    p = planner_circle.compute_trajectory_circle(t_, acc_duration);
+                }
+                
+                KDL::Frame des_pos_rot_; des_pos_rot_.M = init_cart_pose_.M;
+                Eigen::VectorXd des_vel_rot_ = Eigen::VectorXd::Zero(3);
+                Eigen::VectorXd des_acc_rot_ = Eigen::VectorXd::Zero(3);
+
+                // Compute EE frame
+                KDL::Frame cartpos = robot_->getEEFrame();          
+
+                // Compute desired Frame
+                KDL::Frame desFrame; desFrame.M = cartpos.M; desFrame.p = toKDL(p.pos);
+                
+                // compute errors
+                Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(cartpos.p.data));
+                Eigen::Vector3d o_error = computeOrientationError(toEigen(init_cart_pose_.M), toEigen(cartpos.M));
+                std::cout << "The error norm is : " << error.norm() << std::endl;
+
+                if(cmd_interface_ == "velocity"){
+
+                    // Compute differential IK
+                    Vector6d cartvel; cartvel << p.vel + 5*error, o_error;
+                    joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
+                    joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
+                    
+                } 
+                // computation of joint efforts
+                else if(cmd_interface_ == "effort"){
+                    
+                    // Desired twists as Eigen::VectorXd objects
+                    Vector6d cartvel; cartvel << p.vel, des_vel_rot_;
+                    Vector6d cartacc; cartacc << p.acc, des_acc_rot_;
+                    
+                    // Desired frame position and twists as KDL objects
+                    KDL::Frame d_pos; d_pos.M = des_pos_rot_.M; d_pos.p = toKDL(p.pos);
+                    KDL::Twist d_vel = toKDLTwist(cartvel);
+                    KDL::Twist d_acc = toKDLTwist(cartacc);
+                    
+                    
+                    if(cont_type_ == "jnt"){
+                    
+                    // From the trajectory in op. space to the trajectory in joint space thanks to CLIK algorithm
+                    controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda_clik);
+                    // Inverse Dynamics controller in joint space
+                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                    }
+                    else if(cont_type_ == "op"){
+                    // Inverse Dynamics controller in operational space
+                    joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, KD_o, *robot_, lambda_op) - robot_->getGravity();
+                    // Getting the final reference for ending pose
+                    robot_->getInverseKinematics(d_pos, dpos);
+                    }
+                }   
+
+                // Update KDLrobot structure
+                robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
+
+                if(cmd_interface_ == "velocity"){
+                    // Send joint velocity commands
+                    for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
+                        desired_commands_[i] = joint_velocities_(i);
+                    }
+                } else if(cmd_interface_ == "effort"){
+                    // Send joint effort commands
+                    for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
+                        desired_commands_[i] = joint_efforts_(i);
+                    }
+                }
+
+                // Create msg and publish
+                std_msgs::msg::Float64MultiArray cmd_msg;
+                cmd_msg.data = desired_commands_;
+                cmdPublisher_->publish(cmd_msg);
+            }
+            
+            
+            
+            */
+            
+            
+            
+            
+            
+            // Vision Task: Track Orientation
+            
             if(task_ == "look_at_point"){
                 
                 get_tf(camera_frame, "world", "stereo_gazebo_left_camera_optical_frame");
@@ -341,13 +444,11 @@ class Iiwa_pub_sub : public rclcpp::Node
                     dvel.data = Eigen::VectorXd::Zero(robot_->getNrJnts());
                 }
                 
-                dvel_vis.data = k * pseudoinverse(L*Jc) * sd + N * dvel.data;
-                
-                Eigen::VectorXd error_vel = dvel.data - joint_velocities_.data;
+                dvel_vis.data = k * pseudoinverse(L*Jc) * sd;// + N * dvel.data;
                 
                 if(cmd_interface_ == "velocity"){
                     
-                    joint_velocities_.data = dvel_vis.data + 0*error_vel;
+                    joint_velocities_.data = dvel_vis.data;
                     joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
                     
                 }else if(cmd_interface_ == "effort"){
