@@ -13,6 +13,7 @@
 
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/float64.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/wait_for_message.hpp"
@@ -227,6 +228,17 @@ class Iiwa_pub_sub : public rclcpp::Node
             std_msgs::msg::Float64MultiArray cmd_msg;
             cmd_msg.data = desired_commands_;
             cmdPublisher_->publish(cmd_msg);
+            
+            
+            // norm publishing
+            
+            //normPublisher_ = this->create_publisher<std_msgs::msg::Float64>("/error_norm", 10);
+            //norm_timer_ = this->create_wall_timer(std::chrono::milliseconds(freq_ms),std::bind(&Iiwa_pub_sub::norm_publisher, this));
+            
+            // norm publishing
+            normPublisher_ = this->create_publisher<std_msgs::msg::Float64>("/error_norm", 10);
+            norm_timer_ = this->create_wall_timer(std::chrono::milliseconds(freq_ms),std::bind(&Iiwa_pub_sub::norm_publisher, this));
+            norm_to_plot = 0.0;
 
             RCLCPP_INFO(this->get_logger(), "Starting trajectory execution ...");
         }
@@ -393,6 +405,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                 
                     Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(robot_->getEEFrame().p.data));
                     std::cout << "The error norm is : " << error.norm() << std::endl;
+                    norm_to_plot = error.norm();
 
                     Vector6d cartvel; cartvel << p.vel, Eigen::VectorXd::Zero(3);
                     dvel.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
@@ -473,6 +486,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                         Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(cartpos.p.data));
                         Eigen::Vector3d o_error = computeOrientationError(toEigen(Rdes_kdl), toEigen(cartpos.M));
                         std::cout << "The error norm is : " << error.norm() << std::endl;
+                        norm_to_plot = error.norm();
                         
                         // Control computation as Homework 2
                         if(cmd_interface_ == "velocity"){
@@ -583,6 +597,12 @@ class Iiwa_pub_sub : public rclcpp::Node
                 joint_efforts_.data[i] = sensor_msg.effort[i];
             }
         }
+        
+        void norm_publisher(){
+            std_msgs::msg::Float64 nrm_msg;
+            nrm_msg.data = norm_to_plot;
+            normPublisher_->publish(nrm_msg);
+        }
 
         rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr jointSubscriber_;
         rclcpp::Publisher<FloatArray>::SharedPtr cmdPublisher_;
@@ -632,6 +652,9 @@ class Iiwa_pub_sub : public rclcpp::Node
         
         bool flag_tce=0;
         bool flag_end=0;
+        double norm_to_plot;
+        rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr normPublisher_;
+        rclcpp::TimerBase::SharedPtr norm_timer_;
         
         KDL::JntArray dpos_vis, dvel_vis, dacc_vis;
         Eigen::Matrix3d Rdes;
