@@ -268,14 +268,13 @@ class Iiwa_pub_sub : public rclcpp::Node
             double dt = 1.0 / loop_rate;
             t_+=dt;
             
-            // Vision Task: Get the frames of the Aruco and the End Effector
+            // Vision Task: Get the frames of the Aruco and the End Effector (But update it only if the norm of the diff. between the old and the new one is big enough)
             
             KDL::Frame aruco_temp;
             get_tf(aruco_temp, "world", "aruco_marker_frame");
             
             Eigen::Vector3d error_ar = computeLinearError(Eigen::Vector3d(aruco_temp.p.data), Eigen::Vector3d(aruco_frame.p.data));
             Eigen::Vector3d o_error_ar = computeOrientationError(toEigen(aruco_temp.M), toEigen(aruco_frame.M));
-            
             if(error_ar.norm() > 0.01 || o_error_ar.norm() > 0.1){
                 aruco_frame.p = aruco_temp.p;
                 aruco_frame.M = aruco_temp.M;
@@ -286,12 +285,14 @@ class Iiwa_pub_sub : public rclcpp::Node
             // Vision task: Compute desired pose for positioning task
             
             if(task_ == "positioning"){
-            
+                
+                // Computating the desired frame as an offset of the aruco tag
                 KDL::Frame translation_frame(KDL::Rotation::Identity(), KDL::Vector(0.0, 0.0, positioning_offset));
                 KDL::Frame rotation_frame(KDL::Rotation::RotX(3.14), KDL::Vector::Zero());
                 KDL::Frame rotation_frame2(KDL::Rotation::RotZ(3.14), KDL::Vector::Zero());
                 KDL::Frame desired_frame = aruco_frame * translation_frame * rotation_frame * rotation_frame2;
                 
+                // Regulation on the desired frame
                 if(cmd_interface_ == "velocity"){
                     Eigen::Vector3d error = computeLinearError(Eigen::Vector3d(desired_frame.p.data), Eigen::Vector3d(cartpos.p.data));
                     Eigen::Vector3d o_error = computeOrientationError(toEigen(desired_frame.M), toEigen(cartpos.M));
@@ -325,29 +326,35 @@ class Iiwa_pub_sub : public rclcpp::Node
             
             if(task_ == "look_at_point"){
                 
-                get_tf(camera_frame, "world", "stereo_gazebo_left_camera_optical_frame");
+                // Getting the parameters of the control law q_dot = k * (L*Jc) * sd + N * q0_dot
                 
+                // Camera frame adjusted
+                get_tf(camera_frame, "world", "stereo_gazebo_left_camera_optical_frame");
                 KDL::Frame ee_t0_frame;
                 ee_t0_frame = cartpos.Inverse() * tce_frame;
                 camera_frame = ee_t0_frame * camera_frame;
                 
                 double k = 1.0;
                 
+                // cPo
                 KDL::Frame diff_frame;
                 get_tf(diff_frame, "stereo_gazebo_left_camera_optical_frame", "aruco_marker_frame");
                 KDL::Vector diff_position = diff_frame.p;
                 Eigen::Vector3d cPo(diff_position.x(), diff_position.y(), diff_position.z());
                 
+                // s, sd, S(s)
                 Eigen::Vector3d sd(0.0, 0.0, 1.0);
                 Eigen::Vector3d s(cPo(0)/cPo.norm(), cPo(1)/cPo.norm(), cPo(2)/cPo.norm());
                 Eigen::Matrix3d Ss = skew(s);
                 
+                // R
                 Eigen::Matrix3d Rc = toEigen(camera_frame.M);
                 Eigen::MatrixXd R(6, 6);
                 R.setZero();
                 R.block<3, 3>(0, 0) = Rc;
                 R.block<3, 3>(3, 3) = Rc;
                 
+                // Jc
                 Eigen::MatrixXd Tce(6, 6);
                 Tce.setZero();
                 get_tf(tce_frame, "tool0", "stereo_gazebo_left_camera_optical_frame");
@@ -357,6 +364,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                 
                 Eigen::MatrixXd Jc = Tce * robot_->getEEJacobian().data;
                 
+                // L and N
                 Eigen::MatrixXd L(3, 6);
                 L.block<3, 3>(0, 0) = (-1/cPo.norm())*(Eigen::Matrix3d::Identity() - s*s.transpose());
                 L.block<3, 3>(0, 3) = Ss;
@@ -370,7 +378,8 @@ class Iiwa_pub_sub : public rclcpp::Node
                 if(q0_task_ == "exploit"){
                 
                 if (t_ < total_time && traj_type_ != "no_traj"){
-
+                    
+                    // Getting q0_dot from Trajectory Computation
                     trajectory_point p;
                     if(traj_type_ == "lin_pol"){
                         p = planner_linear.compute_trajectory_linear(t_);
@@ -396,8 +405,10 @@ class Iiwa_pub_sub : public rclcpp::Node
                 
                 if(traj_type_ == "no_traj"){dvel.data = Eigen::VectorXd::Zero(robot_->getNrJnts());}
                 
+                // MAIN FORMULA Computation
                 dvel_vis.data = k * pseudoinverse(L*Jc) * sd + N * dvel.data;
                 
+                // Control execution
                 if(cmd_interface_ == "velocity"){
                     
                     joint_velocities_.data = dvel_vis.data;
@@ -419,6 +430,8 @@ class Iiwa_pub_sub : public rclcpp::Node
                 
                     if (t_ < total_time){
                         
+                        // getting the Desired linear pos, vel, acc for the trajectory
+                        
                         trajectory_point p;
                         
                         if(traj_type_ == "lin_pol"){
@@ -435,14 +448,16 @@ class Iiwa_pub_sub : public rclcpp::Node
                             p.acc = Eigen::Vector3d::Zero();
                         }
                         
-                        
+                        // Getting the desired orientation and angular velocity from the look_at_point control law
                         dvel_vis.data = k * pseudoinverse(L*Jc) * sd;
                         dacc_vis.data = Eigen::VectorXd::Zero(robot_->getNrJnts());
                         dpos_vis.data = dpos_vis.data + dvel_vis.data*dt;
                         
+                        // angular x_dot computation
                         Eigen::VectorXd x_dot = robot_->getEEJacobian().data * dvel_vis.data;
                         Eigen::VectorXd des_vel_rot_(3); des_vel_rot_ << x_dot(3),x_dot(4),x_dot(5);
                         
+                        // Getting Rdes from angular x_dot computation (using quaternions for numerical stability)
                         Eigen::Quaterniond qdes(Rdes);
                         Eigen::Quaterniond qvel(Eigen::AngleAxisd(des_vel_rot_.norm() * dt, des_vel_rot_.normalized()));
                         qdes = qvel * qdes;
@@ -493,14 +508,13 @@ class Iiwa_pub_sub : public rclcpp::Node
                         for (long int i = 0; i < joint_velocities_.data.size(); ++i) {joint_velocities_(i) = 0.0;}
                         } else if(cmd_interface_ == "effort"){
                         
-                        // Vision task: Keep tracking the aruco even if the trajectory ended
-                        
                         /*if(q0_task_ == "exploit" && flag_end==0){
                         dpos=dpos_vis; dvel=dvel_vis;
                         flag_end=1;
                         }
                         dacc.data=Eigen::VectorXd::Zero(robot_->getNrJnts());*/
                         
+                        // Vision task: Keep tracking the aruco even if the trajectory ended
                         
                 get_tf(camera_frame, "world", "stereo_gazebo_left_camera_optical_frame");
                 KDL::Frame ee_t0_frame;
@@ -613,10 +627,10 @@ class Iiwa_pub_sub : public rclcpp::Node
         
         double positioning_offset = 0.5;
         KDL::Frame tce_frame;
-        bool flag_tce = 0;
         KDL::Frame d_pos_vis;
         double tj_dur = 10;
         
+        bool flag_tce=0;
         bool flag_end=0;
         
         KDL::JntArray dpos_vis, dvel_vis, dacc_vis;
