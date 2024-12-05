@@ -159,6 +159,7 @@ def generate_launch_description():
         )
     )
 
+
     # Initialize Arguments
     runtime_config_package = LaunchConfiguration('runtime_config_package')
     controllers_file = LaunchConfiguration('controllers_file')
@@ -178,6 +179,19 @@ def generate_launch_description():
     base_frame_file = LaunchConfiguration('base_frame_file')
     namespace = LaunchConfiguration('namespace')
     use_vision = LaunchConfiguration('use_vision')
+    
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            'world',
+            default_value=PathJoinSubstitution([
+                FindPackageShare(description_package),
+                'gazebo/worlds',
+                'empty.world'
+            ]),
+            description='Path to the Gazebo world file',
+        )
+    )
+    world = LaunchConfiguration('world')
 
     # Get URDF via xacro
     robot_description_content = Command(
@@ -226,6 +240,9 @@ def generate_launch_description():
             ' ',
             'use_vision:=',
             use_vision,
+            ' ',
+            'world:=',
+            world,
         ]
     )
 
@@ -305,8 +322,9 @@ def generate_launch_description():
         condition=UnlessCondition(OrSubstitution(use_planning, use_sim)),
     )
     iiwa_simulation_world = PathJoinSubstitution(
-        [FindPackageShare(description_package),
-            'gazebo/worlds', 'empty.world']
+         world
+#        [FindPackageShare(description_package),
+#            'gazebo/worlds', 'empty.world']
     )
   
     declared_arguments.append(DeclareLaunchArgument('gz_args', default_value=[iiwa_simulation_world, ' -r'],

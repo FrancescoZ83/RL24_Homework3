@@ -59,8 +59,8 @@ private:
     params.blobColor = 255;
     params.filterByArea = true;
     params.minArea = 0;
-    params.maxArea = 50000;
-
+    params.maxArea = 500000;
+    
     // Create a blob detector
     cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create(params);
     std::vector<cv::KeyPoint> keypoints;
@@ -71,7 +71,12 @@ private:
     // Draw detected blobs as red circles
     cv::Mat im_with_keypoints;
     cv::drawKeypoints(cv_image, keypoints, im_with_keypoints, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
-
+    
+    // Showing Images
+    cv::imshow("keypoints", im_with_keypoints );
+    cv::waitKey(1);
+    
+    // Image to publish
     img_pub = im_with_keypoints;
   }
 
